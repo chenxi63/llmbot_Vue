@@ -260,32 +260,70 @@ export default {
     }
   },
 
-  //组件首次挂载到 DOM 后自动执行
+  //Home页面加载时执行——未登录、注册用户的新登录、用户日常登录、登录状态下刷新，不同场景下处理本地数据不同
   mounted() {
-    // 页面加载时，先请求所有模型名称
+    // 加载先请求所有模型名称（不需要登录）
     this.fetchModelNames();
 
-    // 页面加载时，加载并请求平台模型列表
+    // 加载并请求平台模型列表(不需要登录)
     const savedPlatformModels = localStorage.getItem('platformModels');
     if (savedPlatformModels) {
       try {
         this.platformModels = JSON.parse(savedPlatformModels);
+        this.isPlatformDataReady = true; // 修复：本地有缓存时也设置为已就绪
       } catch (e) {
         console.error('从localStorage解析平台模型列表失败:', e);
       }
+    } else {
+      this.fetchPlatformModels(); //本地没有平台模型列表则请求后端，然后更新本地存储并设置为已就绪
     }
-    this.fetchPlatformModels();
 
-    // 页面加载时，同步加载本地存储的用户前面选择的action
-    // 未登录状态下，或无历史选择时，强制为"全部应用"；登录状态下，恢复历史选择
+
+    // 1. 先校验用户身份是否为新用户，如果是新用户则清空本地缓存，防止加载历史遗留数据
+    const token = localStorage.getItem('token');
+    let lastLoginEmail = localStorage.getItem('lastLoginEmail');
+    let email = null;
+    if (token) {
+      const payload = this.parseJwt(token);
+      email = payload && payload.sub;
+      if (lastLoginEmail && lastLoginEmail !== email) {
+        // 新用户登录，则清空所有本地缓存
+        localStorage.removeItem('selectedAction'); 
+        localStorage.removeItem('selectedModel');
+        localStorage.removeItem('favorites');
+        localStorage.removeItem('messageLists');
+
+        this.selectedAction = null
+        this.selectedModel = null;
+        this.messageLists = {};
+        this.favorites = [];
+      }
+      if (email) {
+        localStorage.setItem('lastLoginEmail', email);  //存储最新登录邮箱
+      }
+    } else {
+        // 没有token（未登录/token过期/登出）
+        localStorage.removeItem('selectedAction'); 
+        localStorage.removeItem('selectedModel');
+        localStorage.removeItem('favorites');
+        localStorage.removeItem('messageLists');
+
+        this.selectedAction = null
+        this.selectedModel = null;
+        this.messageLists = {};
+        this.favorites = [];
+    }
+
+    
+    // 2、加载本地存储的用户前面选择的action
     const savedAction = localStorage.getItem('selectedAction');
-    if (!this.isLoggedIn || !savedAction) {
+    if (!this.isLoggedIn || !savedAction || this.selectedAction === null) {
       this.selectAction('全部应用');
     } else {
       this.selectAction(savedAction);
     }
 
-    // 页面加载时，同步加载本地存储的用户前面选择的模型
+    // 3、加载本地存储的用户前面选择的model
     const savedModel = localStorage.getItem('selectedModel');
     if (this.isLoggedIn && savedModel) {
       this.selectedModel = savedModel;
@@ -293,7 +331,7 @@ export default {
       this.selectedModel = null;
     }
 
-    // 页面加载时，同步加载本地存储的消息列表
+    // 4、加载本地存储的消息列表messageLists
     const savedMessageLists = localStorage.getItem('messageLists');
     if (savedMessageLists) {
       try {
@@ -302,61 +340,59 @@ export default {
         this.messageLists = {};
       }
     }
-    
-    // 页面加载时，同步加载本地存储的token，确认登录状态并向后端更新请求userLoginData.user
-    const token = localStorage.getItem('token');
-    if (token) {
+
+    // 不会从本地存储加载收藏列表favorites，每次从后端数据请求最新的收藏列表
+    // favorites 只会在收藏/取消收藏时同步到本地存储，但页面加载和登录后始终以后端为准，不会直接用本地缓存。
+
+    // 登录状态token未过期，刷新页面重新请求后端的userLoginData(收藏列表)，放弃login时的userLoginData
+    if (token && email) {
       const payload = this.parseJwt(token);
-      const email = payload && payload.sub;
-      if (email) {
-        const currentTime = Math.floor(Date.now() / 1000);
-        // 检查token是否过期
-        if (payload.exp && currentTime > payload.exp) {
-          console.log('Token expired on mount:', payload.exp, 'Current time:', currentTime);
-          localStorage.removeItem('token');
-          Vue.set(loginState, 'userLoginData', null);
-          // Token过期，清空收藏信息
-          this.clearFavorites();
-        } else {
-          console.log('Using token on mount:', token);
-          // token未过期，尝试获取用户信息
-          service.get('/user/getbyemail', {
-            params: { email },
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            }
-          })
-          .then(async response => {
-            console.log('User info response:', response);
-            const responseData = response.data;
-            if (responseData && responseData.data) {
-              Vue.set(loginState, 'userLoginData', {...responseData.data});
-              // 从后端collectModels字段更新收藏列表
-              await this.updateFavoritesFromBackend();
-            }
-          })
-          .catch(err => {
-            console.error('获取用户信息失败:', err);
-            console.log('Error response:', err.response);
-            if (err.response && err.response.status === 401) {
-              localStorage.removeItem('token');
-              Vue.set(loginState, 'userLoginData', null);
-            }
-            // 获取用户信息失败，清空收藏信息
-            this.clearFavorites();
-          });
-        }
+      const currentTime = Math.floor(Date.now() / 1000);
+      //token过期，则清除所有本地存储的数据、全局状态数据，跳转登录页
+      if (payload.exp && currentTime > payload.exp) {
+        console.log('Token expired on mount:', payload.exp, 'Current time:', currentTime);
+        localStorage.removeItem('token');
+        localStorage.removeItem('selectedAction');
+        localStorage.removeItem('selectedModel');
+        localStorage.removeItem('favorites');
+        localStorage.removeItem('messageLists');
+        localStorage.removeItem('lastLoginEmail');
+        this.selectedAction = null;
+        this.selectedModel = null;
+        this.messageLists = {};
+        this.favorites = [];
+        Vue.set(loginState, 'userLoginData', null);
+        window.location.reload();  //清除数据后重新加载Home页面
       } else {
-        // 无法解析token，清空收藏信息
-        this.clearFavorites();
+        service.get('/user/getbyemail', {   //token正常未过期，向后端请求用户信息userLoginData
+          params: { email },
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
+        })
+        .then(async response => {
+          console.log('User info response:', response);
+          const responseData = response.data;
+          if (responseData && responseData.data) {
+            Vue.set(loginState, 'userLoginData', {...responseData.data}); //更新userLoginData的登录状态
+            await this.updateFavoritesFromBackend();  //从后端返回的userLoginData中更新收藏列表
+          }
+        })
+        .catch(err => {
+          console.error('获取用户信息失败:', err);
+          console.log('Error response:', err.response);
+          if (err.response && err.response.status === 401) {
+            localStorage.removeItem('token');
+            Vue.set(loginState, 'userLoginData', null);
+          }
+          // 获取用户信息失败，清空收藏信息
+          this.clearFavorites();
+        });
       }
-    } else {
-      // 没有token，清空收藏信息
-      this.clearFavorites();
     }
-    
+
     // 新增：未登录时点击除.user-status-btn外区域提示登录
     document.addEventListener('click', this.handleGlobalClick, true);
 
@@ -429,8 +465,8 @@ export default {
         });
 
         this.platformModels = platformData;
-        localStorage.setItem('platformModels', JSON.stringify(platformData));
-        this.isPlatformDataReady = true; // 标记为加载成功
+        localStorage.setItem('platformModels', JSON.stringify(platformData)); // 存储平台模型列表到本地
+        this.isPlatformDataReady = true; // 标记为加载成功，已就绪
       } catch (error) {
         this.isPlatformDataReady = false; // 标记为加载失败
         console.error('获取平台模型列表失败:', error);
@@ -865,28 +901,33 @@ export default {
         const response = await service.post('/user/login', body);
         const responseData = response.data;
         
-        //从登录响应中提取token并保存本地
+        //存储登录成功后返回的最新token,此时Home页未加载
         const token = response.headers['authorization'] || response.headers['Authorization'] || response.headers['token'] || response.headers['Token'];
         if (token) {
           this.saveToken(token);
         }
 
         if (responseData.code === 200) {
-          // 在登录逻辑成功后，但在设置任何新状态或重新加载页面之前
-          if (responseData && responseData.data) {
-            // 清除本地存储的模型选择历史，确保新登录不恢复旧选择
-            localStorage.removeItem('selectedModel');
-            this.selectedModel = null;
-
-            // 使用Vue.set确保响应式更新
-            Vue.set(loginState, 'userLoginData', responseData.data);
-            await this.updateFavoritesFromBackend();
-            this.messageLists = {};
-            localStorage.removeItem('messageLists');
-            this.showLoginModal = false;
-            this.$message({message: '登录成功', type: 'success', duration: 2000 });
-            window.location.href = '/home';
+          // 清除所有本地存储的用户相关数据，确保新登录不恢复旧选择
+          localStorage.removeItem('selectedAction');
+          localStorage.removeItem('selectedModel');
+          localStorage.removeItem('favorites');
+          localStorage.removeItem('messageLists');
+          localStorage.removeItem('lastLoginEmail');
+          this.selectedAction = null;
+          this.selectedModel = null;
+          this.messageLists = {};
+          this.favorites = [];
+          // 获取登录成功返回的用户信息,提取并本地存储email、收藏列表
+          let userEmail = (responseData.data && responseData.data.user && responseData.data.user.email) ? responseData.data.user.email : null;
+          if (userEmail) {
+            localStorage.setItem('lastLoginEmail', userEmail);
           }
+          Vue.set(loginState, 'userLoginData', responseData.data.user);
+          await this.updateFavoritesFromBackend();
+          this.showLoginModal = false;
+          this.$message({ message: '登录成功', type: 'success', duration: 2000 });
+          window.location.href = '/home';
         } else {
           const errorMessage = responseData.errors?.credentials || responseData.message || '登录失败';
           this.$message({
@@ -960,21 +1001,31 @@ export default {
         const responseData = response.data;
         const token = response.headers['authorization'] || response.headers['Authorization'] || response.headers['token'] || response.headers['Token'];
         if (token) {
-          this.saveToken(token);
+          this.saveToken(token);  //存储登录成功后返回的最新token,此时Home页未加载
         }
 
         if (responseData.code === 200) {
+          // 清除所有本地存储的用户相关数据，确保新登录不恢复旧选择
+          localStorage.removeItem('selectedAction');
+          localStorage.removeItem('selectedModel');
+          localStorage.removeItem('favorites');
+          localStorage.removeItem('messageLists');
+          localStorage.removeItem('lastLoginEmail');
+          this.selectedAction = null;
+          this.selectedModel = null;
+          this.messageLists = {};
+          this.favorites = [];
+          // 保存当前登录用户email
+          let userEmail = (responseData.data && responseData.data.user && responseData.data.user.email) ? responseData.data.user.email : null;
+          if (userEmail) {
+            localStorage.setItem('lastLoginEmail', userEmail);
+          }
           Vue.set(loginState, 'userLoginData', responseData.data.user);
-
           // 从后端collectModels字段更新收藏列表
           await this.updateFavoritesFromBackend();
-
-          // 登录成功后清除消息记录
-          this.messageLists = {};
-          localStorage.removeItem('messageLists');
-
           this.showLoginModal = false;
           this.$message({ message: '登录成功', type: 'success', duration: 2000 });
+          window.location.href = '/home';
         } else {
           this.$message({ message: responseData.message || '登录失败', type: 'error', duration: 2000 });
         }

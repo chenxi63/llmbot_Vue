@@ -144,7 +144,7 @@ export default {
     async handleRegister() {
       if (this.validateForm()) {
         try {
-          //用户注册不需要的请求与响应都不含token，不使用预定义的service实例，直接使用axios
+          //用户注册不需要鉴权，不使用预定义的service实例，直接使用axios
           const response = await axios.post(`${API_BASE_URL}/user/register`, { 
             email: this.registerForm.email,
             phone: '+86' + this.registerForm.phone,
@@ -156,6 +156,11 @@ export default {
           const responseData = response.data;
           
           if (responseData.code === 200) {
+            // 注册成功，先清除所有本地其他用户可能遗留的相关缓存
+            localStorage.removeItem('messageLists');
+            localStorage.removeItem('selectedModel');
+            localStorage.removeItem('favorites');
+
             this.$message({
               message: '注册成功，正在自动登录...',
               type: 'success',
