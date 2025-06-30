@@ -1,24 +1,22 @@
-# llmbot
+🌟 产品已部署上线，可自由体验:llmbot.tech
 
-## Project setup
-```
-npm install
-```
+🌟 平台简介
+一款支持多模型切换的智能对话平台，采用类IM聊天界面设计，提供流畅自然的AI对话体验。
 
-### Compiles and hot-reloads for development
-```
-npm run serve
-```
+✨ 核心功能
 
-### Compiles and minifies for production
-```
-npm run build
-```
+​#​多模型支持​​：集成多种主流LLM模型
 
-### Lints and fixes files
-```
-npm run lint
-```
+​​#对话管理​​：自动保存历史记录，默认自动加载5轮(10条)历史对话，支持重建对话上下文
 
-### Customize configuration
-See [Configuration Reference](https://cli.vuejs.org/config/).
+​​#模型收藏​​：自由收藏常用模型，快速切换
+
+​​#用户系统​​：账号注册/登录/登出
+
+*注：暂未开放充值功能与会员管理，默认为普通用户
+
+#Home页——未登录状态： image
+![image](https://github.com/user-attachments/assets/a53036d7-bfb0-4aac-83d9-959d2b42a515)
+
+#Home页——正常使用状态： image
+![image](https://github.com/user-attachments/assets/d6175254-116d-46a1-9b02-4d9aecd73e77)
